@@ -10,17 +10,40 @@ class VectorClock:
 
     def update(self, other):
         self.inc()
-        self._v = np.maximum(self._v, other) # updates clock with maximum value for each peer
+        self._v = np.maximum(self._v, other.timestamp) # updates clock with maximum value for each peer
 
     def inc(self):
         self._v[self._si] += 1
 
+    # currently expects VectorClock type, and then gets its timestamp, but should allow passing raw vector too
+    def causal(self, other):
+        return VectorClock.check_causality(self.timestamp, other.timestamp)
+
     # Setters/Getters
     @property
-    def vc(self):
+    def timestamp(self):
         return self._v
 
     @staticmethod
     def check_causality(before, after):
+        # TODO: RH - add type hints and allow either vectors of same length or VectorClock types to be compared
         # Return True if VC_before <= VC_after for all processes (elements)
         return np.all(before <= after)
+    
+if __name__=="__main__":
+    vc1 = VectorClock(8, 0)
+    vc2 = VectorClock(8, 1)
+
+    vc1.inc()
+    vc2.inc()
+    vc2.inc()
+    vc2.inc()
+
+    print("VC1:", vc1.timestamp)
+    print("VC2:",vc2.timestamp)
+
+    vc1.update(vc2)
+    print("VC1:", vc1.timestamp)
+    print("VC2:",vc2.timestamp)
+
+    print("Did VC1 happen before VC2? :", vc1.causal(vc2))
