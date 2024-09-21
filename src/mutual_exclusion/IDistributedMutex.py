@@ -1,10 +1,17 @@
-
+import queue
 
 
 
 class CDistributedMutex:
     def __init__(self) -> None:
-        pass
+        self.voting_group_hosts = {}    # Set representing the subset of hosts this node will make requests to.
+        self.current_vector_clock = []  # Current vector clock view of subset
+        self.entire_host_list = []      # List of Global hosts that subsets are made from
+        self.this_node_host_id = ()     # host id for this instance of CDistributedMutex
+
+        self.request_queue = queue.Queue()   # TODO come up with a nice way to set size. Maybe in MInitialize
+
+        self.locked = True              # This flag is set when any node is known to have the lock
 
     # • GlobalInitialize() will be called once when the process is started, and it will not be called
     # again. The array hosts will contain information for all of the participants in the system
@@ -23,21 +30,25 @@ class CDistributedMutex:
         pass
 
 #   MInitialize() will be called once when starting to test Maekawa’s. May be recalled multiple
-        # times, as long as the corresponding cleanup algorithm. MCleanup() is done after each
+        # times, as long as the corresponding cleanup algorithm, MCleanup(), is done after each
         # initialization. The votingGroupHosts array contains an index (to the hosts array) for each
         # host in the voting set/group of the current host.
 #   Input: voting_group_hosts : array of host ids in the set of the current host
     def MInitialize(self, voting_group_hosts):
+
         pass
 
 #   MLockMutex() initiates a BLOCKING request for the critical section.
 # 
 #   Returns: value on obtaining lock. 
     def MLockMutex(self):
+        self.
+        print(self.current_vector_clock)
         pass
 
 #   MReleaseMutex() exits the critical section once it is obtained
     def MReleaseMutex(self):
+        # Pop from 
         pass    
 
     def MCleanup(self):
