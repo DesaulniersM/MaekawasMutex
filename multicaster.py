@@ -11,6 +11,8 @@ Contains all functionality needed to:
     - Defines message structures
 """
 import struct, socket, queue, select
+import threading
+import sys
 import numpy as np
 from src.mutual_exclusion.vectorclock import *
 
@@ -45,7 +47,6 @@ def unpack_message(message):
     return struct.unpack('Q', message)
 
 # Borrowing this helper class for single machine multi-threaded testing from my project: https://github.com/jmaggio14/imagepypelines/blob/develop/imagepypelines/core/util.py
-import threading
 # class BaseCommThread(threading.Thread):
 #     '''
 #     Parent Class to all thread manager classes.
@@ -120,6 +121,7 @@ class P2PNode:
     def __init__(self, hostid):
         # super().__init__()
         self.id = hostid
+        self.active_threads = []
 
         # Set up request state tracker (at most one request at a time)
         self.request_state = [False] * len(HOSTS) # May need this to be thread safe...
@@ -161,26 +163,31 @@ class P2PNode:
     def critical_section(self):
         print(self)
 
-    def _message_handler(self):
+    def _message_handler(self, event):
         # This effectively executes the Maekawa state-machine
         # Likely we'll just pass in multicast send and send callbacks to Maekawa so it can send stuff in the proper case?
-        while True:
+        while not event.is_set():
+            # print(event)
             # select readable socket
-            r, _, err = select.select(self.listeners, [], self.listeners)
+            r, _, err = select.select(self.listeners, [], self.listeners, 0.1)
 
             for sock in r:
                 locked = np.all(self.request_state)
                 # Maekawa_StateMachine(send, read, sock, self) # This will execute any sends and receives needed given the incoming message from a certain host
 
-            for s in err:
-                print(s, s.error)
+            # for s in err:
+            #     print(s, s.error)
 
-    def _critical_section_guard(self):
-        while True:
+            if event.is_set():
+                break
+        print("Keyboard Interrupt... Exiting thread ", threading.current_thread().name)
+
+    def _critical_section_guard(self, event):
+        while not event.is_set():
             self.reset = False
             # Maekawa_AcquireLock(multicast_send, sock) # sends REQUEST messages to target quorum
             
-            while True:
+            while not event.is_set():
                 # Check whether we have the lock
                 if np.all(self.request_state):
                     self.critical_section()
@@ -189,7 +196,14 @@ class P2PNode:
                 elif self.reset:
                     break
 
-    def run(self):
+                if event.is_set():
+                    break
+
+            if event.is_set():
+                break
+        print("Keyboard Interrupt... Exiting thread ", threading.current_thread().name)
+
+    def run(self, event=None):
         # MAIN THREAD
         # Do any setup required, begin both of the worker threads (each running indefinitely), and handle cleanup elegantly
 
@@ -198,6 +212,34 @@ class P2PNode:
         # If a message needs to be sent we can handle it here
         # Otherwise we just do updates to this node's variables or state and recv the next message
 
+        # Based on approach found here: https://stackoverflow.com/questions/4136632/how-to-kill-a-child-thread-with-ctrlc
+
+        # if not event:
+        #     event = threading.Event()
+
+        # try:
+        t1 = threading.Thread(target=self._message_handler, args=(event,))
+        t1.daemon = True
+        t2 = threading.Thread(target=self._critical_section_guard, args=(event,))
+        t2.daemon = True
+
+        t1.start()
+        t2.start()
+
+        self.active_threads.append(t1)
+        self.active_threads.append(t2)
+
+        print("Handling incoming P2P messages with       : ", t1)
+        print("Handling outgoing multicast messages with : ", t2)
+
+        # event.wait()  # blocking capture of KeyboardInterrupt
+        # t1.join()
+        # t2.join()
+
+        # except KeyboardInterrupt:
+        #     print("Ctrl+C pressed... shutting down.")
+        #     event.set()  # kill the children
+
         # THREAD 2 - REQUEST and RELEASE sender + Critical section trigger
         # 0) self.reset = False
         # 1) send REQUEST
@@ -205,23 +247,35 @@ class P2PNode:
         # 3)    if self.reset: reset state vector and resend a request to TARGET_QUORUM via break
         # 4) send RELEASE
         
-
         ############################
-        print("Hi we've entered the execution function")
-        def test_func():
-            for i in range(5):
-                print(f"[{i}] Howdy, I'm " + threading.current_thread().name)
+        # TEST
+        # print("Hi we've entered the execution function")
+        # def test_func():
+        #     for i in range(5):
+        #         print(f"[{i}] Howdy, I'm " + threading.current_thread().name)
 
-        t1 = threading.Thread(target=test_func)
-        t2 = threading.Thread(target=test_func)
+        # t1 = threading.Thread(target=test_func)
+        # t2 = threading.Thread(target=test_func)
 
-        print(t1,t2)
-        t1.start()
-        t2.start()
-
-        t1.join()
-        t2.join()
+        # t1.join() # Can't join when the child processes are encapsulated by while True!!! Unless we give them break conditions with event
+        # t2.join()
 
 if __name__=="__main__":
+    print("Press CTRL-C a few times to exit.")
     n = P2PNode(0)
-    n.run()
+    event = threading.Event()
+    n.run(event)
+
+    # try:
+    #     n.run(event)
+    # except KeyboardInterrupt:
+    #     print("Killing program...")
+    #     event.set() # For some reason this isn't allowing my threads to break.....
+
+    while n.active_threads: 
+        try:
+            n.active_threads[-1].join(1)
+        except KeyboardInterrupt:
+            event.set()
+            tmp = n.active_threads.pop()
+            print("Removed dead thread: ", tmp)
