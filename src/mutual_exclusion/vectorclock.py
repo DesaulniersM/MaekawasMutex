@@ -10,7 +10,7 @@ class VectorClock:
         if timestamp is not None:
             self._v = np.asarray(timestamp).astype(int)
         else:
-            self._v = np.zeros(num_peers, dtype=int)
+            self._v = np.zeros(num_peers, dtype=int) # Each element is an 8byte int
 
     def update(self, other):
         self.inc()
@@ -27,6 +27,10 @@ class VectorClock:
     @property
     def timestamp(self):
         return self._v
+    
+    @property
+    def tobytes(self):
+        return self._v.tobytes() # Technically this is a copy but whatever
     
     # specials for direct comparison of VC to VC
     def __lt__(self, other): # actually checks less than or equal to across entire timestamp
@@ -45,6 +49,11 @@ class VectorClock:
         # return sorted(range(len(vc_set)), key=cmp_to_key(lambda a,b: -1 if VectorClock.check_causality(vc_set[a], vc_set[b]) else 1))
         return sorted(range(len(vc_set)), key=cmp_to_key(lambda a,b: -1 if vc_set[a] < vc_set[b] else 1))
     
+    @classmethod
+    def frombytes(cls, hostid, bytesarray):
+        ts = np.frombuffer(bytesarray, dtype=int)
+        return cls(hostid, timestamp=ts)
+
 if __name__=="__main__":
     vc1 = VectorClock(0, num_peers=8)
     vc2 = VectorClock(1, num_peers=8)

@@ -5,6 +5,17 @@ import socket
 import struct
 import sys
 
+
+# MSG MANIPULATION
+######################
+def pack_msg(msg_str):
+    return msg_str.encode('utf-8')
+
+def unpack_msg(msg_bytes):
+    return msg_bytes.decode('utf-8')
+
+# Multicast funcs
+#################
 def send(message):
     # multicast group and port
     multicast_group = ('224.3.29.71', 10000)
@@ -45,7 +56,7 @@ def send(message):
 def begin_receiving():
     # receiver
     multicast_group = '224.3.29.71'
-    server_address = ('', 10000)
+    server_address = ('', 10000) # PORT MUST MATCH THE PORT OVER WHICH THE MULTICAST IS BEING SENT!!!
 
     # Create the socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
