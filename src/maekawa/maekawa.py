@@ -27,36 +27,31 @@ class Messages(enum):
 
 ######################### Class Definition ###############################
 
-class Node():
-    def __init__(self) -> None:
+class Maekawa():
+    def __init__(self, quorum_socket) -> None:
         self.current_state = States.Listening   # Start in listening state by default
 
         self.votes = 0      #Number of votes in favor of this node accessing CS
         self.voted = False  # If this variable is true, This node has not sent/received a Release message it is waiting on
         
-        self.quorum_socket = multicastmultithreadcomms.MulticastingP2PNode()        # represents multicast
+        self.quorum_socket =         # represents multicast
 
         self.request_queue = queue.Queue()          # queue for tracking votes
         
         
-        pass
-
 
     # This function runs the node processes, calling the maekawa and networking modules as needed
-    def run(self):
+    def run(self, sock):
 
-        while(True):
-
+            new_state = sock.recvfrom()
             # STATE CHANGES SHOULD ONLY BE CHANGED WHEN SENDING OR RECEVING MESSAGES.
             # IN OTHER WORDS, THIS WHILE LOOP SHOULD ONLY LOOP WHEN  ANEW MESSAGE COMES IN.
             
-            match state:
+            match self.current_state:
                 case States.Holding:
-                    # This node is waiting for a release message from a node in their quorum, but not accessing the critical section
-                    new_message = self.quorum_socket.listen()
                     
                     # IF the new message is another request. Queue it and listen for release
-                    if new_message == Messages.Request:
+                    if new_message == Messages.Requesting:
                         self.request_queue.put( new_host)
 
                     # if the new message is a release, pop the node from the queue and change your state from held
@@ -66,9 +61,7 @@ class Node():
                         
                         
                 case States.Request:
-                    # This node has decided it needs to access the critical section
-                    new_message = self.quorum_socket.listen()
-
+                    # This node has d
                     if new_message == Messages.Requesting:
                     # IF the new message is another request, queue it and continue listening for releases
 
@@ -81,10 +74,7 @@ class Node():
                             access_critical_section()
                             self.current_state = States.
                         
-
-
                 case States.Listening:
-                    new_message = self.quorum_socket.listen()
 
                     # Listener hears a release
                     if new_message == Messages.Release:
@@ -98,7 +88,7 @@ class Node():
                             
                     elif new_message  == Messages.Request:
 
-                        # Put new re    questor in queue and pop them if you vote. otherwise wait for release
+                        # Put new requestor in queue and pop them if you vote. otherwise wait for release
                         self.request_queue.put(new_host_from_message)
                         if self.voted == False:
                             self.voted = True

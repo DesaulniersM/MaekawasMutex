@@ -14,6 +14,8 @@ import struct, socket, queue, select
 import threading
 import sys
 import numpy as np
+import src.maekawa
+from src.maekawa.maekawa import Maekawa
 from src.mutual_exclusion.vectorclock import *
 
 HOSTS = [('',5551), ('',5552), ('',5553)] # These will obviously not all be localhost upon creation
@@ -153,6 +155,11 @@ class P2PNode:
 
         # init vector clock
         self.vc = VectorClock(hostid, len(HOSTS))
+        # thread lock
+        self.vc_lock = threading.Lock()
+        
+        # Maekawa object that manages maekawa state-machine
+        self.maekawa_state_machine = Maekawa()
 
         # Priority Queue for managing requests (eventually from maekawa)
         self.request_queue = queue.PriorityQueue() # items will be (self.id, self.vc) since VCs are comparable!
@@ -171,8 +178,11 @@ class P2PNode:
             # select readable socket
             r, _, err = select.select(self.listeners, [], self.listeners, 0.1)
 
+            
             for sock in r:
+                #increment vector clock
                 locked = np.all(self.request_state)
+                self.maekawa_state_machine.run(sock)
                 # Maekawa_StateMachine(send, read, sock, self) # This will execute any sends and receives needed given the incoming message from a certain host
 
             # for s in err:
