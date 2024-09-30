@@ -10,5 +10,9 @@
             * Clock management (dedicated listening thread? discuss with @Matt)
 """
 
-if __name__=="__main__":
-    pass
+import mutual_exclusion.IDistributedMutex
+from quorum_generator.quorum_generator import generate_quorums
+
+if __name__ == "__main__":
+
+    print(generate_quorums(5))

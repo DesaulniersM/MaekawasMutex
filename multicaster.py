@@ -125,7 +125,7 @@ class P2PNode:
         self.id = hostid
         self.active_threads = []
 
-        # Set up request state tracker (at most one request at a time)
+        # Set up request state tracker (at most one request at a time). This should be size Quorum.
         self.request_state = [False] * len(HOSTS) # May need this to be thread safe...
         self.reset = False
 
@@ -157,7 +157,7 @@ class P2PNode:
         self.vc = VectorClock(hostid, len(HOSTS))
         # thread lock
         self.vc_lock = threading.Lock()
-        
+
         # Maekawa object that manages maekawa state-machine
         self.maekawa_state_machine = Maekawa()
 
