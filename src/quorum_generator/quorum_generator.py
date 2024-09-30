@@ -1,4 +1,3 @@
-
 import math
 
 # make_new_quorum makes a new quorum given coordinates and an i,j pair.

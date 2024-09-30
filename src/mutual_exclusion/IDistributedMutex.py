@@ -1,3 +1,6 @@
+from src.mutual_exclusion.vectorclock import VectorClock
+
+
 class CDistributedMutex:
     def __init__(self) -> None:
         self.entire_host_id_list = []  # List of Global hosts that subsets are made from
@@ -6,7 +9,6 @@ class CDistributedMutex:
         self.voting_group_hosts = (
             []
         )  # Set representing the subset of hosts this node will make requests to.
-        self.current_vector_clock = []  # Current vector clock view of subset
 
         self.locked = False  # This flag is set when any node is known to have the lock
 
@@ -22,6 +24,9 @@ class CDistributedMutex:
     def GlobalInitialize(self, this_host, hosts):
         self.entire_host_id_list = hosts
         self.this_process_host_id = hosts[this_host]
+        self.current_vector_clock = VectorClock(
+            self_index=this_host, num_peers=len(hosts)
+        )  # Current vector clock view of subset
 
     #   QuitAndCleanup() will be called once when you are done testing your code.
     def QuitAndCleanup(self):
@@ -37,8 +42,6 @@ class CDistributedMutex:
         self.voting_group_hosts = [
             self.entire_host_id_list[host] for host in voting_group_hosts
         ]
-        # We now have length of voting groups and may create a vector clock
-        self.current_vector_clock = [0] * len(voting_group_hosts)
 
     #   MLockMutex() initiates a BLOCKING request for the critical section.
     #
@@ -58,3 +61,21 @@ class CDistributedMutex:
             []
         )  # Set representing the subset of hosts this node will make requests to.
         self.current_vector_clock = []  # Current vector clock view of subset
+
+    def run(self, number_of_cs_requests, number_of_runs):
+
+        # The access frequency and duration will simulate computer needing to randomly access some cs. 
+        # Since we'll be a using a print as the cs, We wil also have the computers wait for some time 
+        # while inside to test the request while process is holding mechanism.
+
+        access_frequency = some_random_number  # [seconds]
+        access_duration = some_random_number  # [seconds]
+
+        # Run maekawas algorithm this many times
+        for run in range(number_of_runs):
+
+            self.MInitialize()  # Initialize the maekawa algorithm
+
+            
+
+            self.MCleanup()  # clean up the maekawa algorithm

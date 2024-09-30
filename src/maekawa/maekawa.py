@@ -104,10 +104,5 @@ class Maekawa():
 
 if __name__=="__main__":
     
-    # set up 
-    test_node_1 = Node()
-    test_node_2 = Node()
-
-    # run in threads
-
+   
 
