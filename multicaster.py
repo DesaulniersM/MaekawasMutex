@@ -14,10 +14,11 @@ import struct, socket, queue, select
 import threading
 import sys
 import numpy as np
-from src.maekawa.maekawa import Maekawa
 from src.mutual_exclusion.vectorclock import *
 from src.networking import *
-from src.maekawa import Messages
+from enum import Enum
+
+
 
 HOSTS = [('',5551), ('',5552), ('',5553)] # These will obviously not all be localhost upon creation
 
@@ -37,10 +38,20 @@ HOST_TARGET_QUORUM = {
     2: "c"
 }
 
+# Three types of messages that can be sent by a node
+class Messages(Enum):
+    Request = 0         # Request to enter CS. Sent to subset quorum members
+    Reply = 1           # Reply to Request. This will ALWAYS be a "You may enter CS" reply.
+    Release = 2         # Release message communicates that the CS is exited and quorum members may reply to next queue members
+
+
 TARGET_QUORUM_HOST = {v:k for k,v in HOST_TARGET_QUORUM.items()}
+
+NUMBER_NODES_IN_TARGET_QUORUM = 10
 
 # MESSAGE LEN IS ALWAYS 2 bytes + vector clock size: 1 byte node id (0-255), 8 byte (0,2**64-1) x N-element vector clock, 1 byte enum
 MESSAGE_FIXED_SIZE = 2 + 8*len(HOSTS)
+
 
 def structure_message(hostid, vector_clock, message_enum):
     return str(hostid).encode('utf-8') + vector_clock.tobytes() + str(message_enum).encode('utf-8') # Maybe we should actually use a struct for packing/unpacking???
@@ -78,8 +89,6 @@ class P2PNode:
         # thread lock
         self.vc_lock = threading.Lock()
 
-        # Maekawa object that manages maekawa state-machine
-        self.maekawa_state_machine = Maekawa()
 
         # Priority Queue for managing requests (eventually from maekawa)
         self.request_queue = queue.PriorityQueue() # items will be (self.id, self.vc) since VCs are comparable!
@@ -144,23 +153,29 @@ class P2PNode:
         # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
         self.msock.sendto(structure_message(self.id, self.vc, Messages.RELEASE), (self.target_multicast_group,HOSTS[self.id][1]))
 
-    # Matt's de
 
     def _message_handler(self, event):
         # This effectively executes the Maekawa state-machine
         # Likely we'll just pass in multicast send and send callbacks to Maekawa so it can send stuff in the proper case?
         while not event.is_set():
-            # print(event)
+
+           
+
             # select readable socket
             r, _, err = select.select(self.listeners, [], self.listeners, 0.1)
             
             
             for sock in r:
                 
-                #increment vector clock
-                locked = np.all(self.request_state)
-                self.maekawa_state_machine.run(sock)
-                # Maekawa_StateMachine(send, read, sock, self) # This will execute any sends and receives needed given the incoming message from a certain host
+                new_message = self._process_message(sock)
+
+                # match new_message:
+                #     case Messages.Release:
+                #         pass
+                #     case Messages.Reply:
+                #         pass
+                #     case Messages.Release:
+                #         pass
 
             # for s in err:
             #     print(s, s.error)
@@ -222,34 +237,6 @@ class P2PNode:
 
         print("Handling incoming P2P messages with       : ", t1)
         print("Handling outgoing multicast messages with : ", t2)
-
-        # event.wait()  # blocking capture of KeyboardInterrupt
-        # t1.join()
-        # t2.join()
-
-        # except KeyboardInterrupt:
-        #     print("Ctrl+C pressed... shutting down.")
-        #     event.set()  # kill the children
-
-        # THREAD 2 - REQUEST and RELEASE sender + Critical section trigger
-        # 0) self.reset = False
-        # 1) send REQUEST
-        # 2) Wait with while loop for executing the critical section if the state is ever all True or self.reset is True
-        # 3)    if self.reset: reset state vector and resend a request to TARGET_QUORUM via break
-        # 4) send RELEASE
-        
-        ############################
-        # TEST
-        # print("Hi we've entered the execution function")
-        # def test_func():
-        #     for i in range(5):
-        #         print(f"[{i}] Howdy, I'm " + threading.current_thread().name)
-
-        # t1 = threading.Thread(target=test_func)
-        # t2 = threading.Thread(target=test_func)
-
-        # t1.join() # Can't join when the child processes are encapsulated by while True!!! Unless we give them break conditions with event
-        # t2.join()
 
 if __name__=="__main__":
     print("Press CTRL-C a few times to exit.")
