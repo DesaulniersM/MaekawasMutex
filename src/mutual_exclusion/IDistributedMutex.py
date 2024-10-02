@@ -4,8 +4,8 @@ from random import uniform
 import threading
 from enum import Enum
 
+import socket, queue, select
 
-import queue
 
 # Three types of messages that can be sent by a node
 class Messages(Enum):
@@ -50,7 +50,7 @@ class CDistributedMutex:
     def GlobalInitialize(self, this_host, hosts):
         self.entire_host_id_list = hosts
         self.this_process_host_id = hosts[this_host]
-        self.current_vector_clock = VectorClock(
+        self.vector_clock = VectorClock(
             self_index=this_host, num_peers=len(hosts)
         )  # Current vector clock view of subset
 
@@ -80,13 +80,74 @@ class CDistributedMutex:
         # Priority Queue for managing requests
         self.request_queue = queue.PriorityQueue() # items will be (self.vc) since VCs are comparable and also hold ID!
 
-        
+                # socket setup - multicast send
+   
+    def _setup_multicast_send_socket(self):
+        # Create sender socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+
+        # Need to ensure all sockets are "reuse address" since we connect to same address with multiple sockets
+        sock.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_REUSEADDR,
+            1)
+        sock.settimeout(0)
+
+        # This specifies how many "hops" across the network the multicasted message will travel
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, struct.pack('b', 1))
+
+        self.msock = sock
+        self.listeners.append(sock)
+
+    # socket setup - p2p send/receive
+    def _setup_multicast_receive_socket(self, quorum_multicast_group):
+        # Create the socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_REUSEADDR,
+            1)
+
+        sock.setblocking(0)
+        sock.bind(('', None)) # Just bind to localhost and a random port number!
+
+        # Tell the operating system to add the socket to the multicast group
+        # on all interfaces.
+        group = socket.inet_aton(quorum_multicast_group)
+        mreq = struct.pack('4sL', group, socket.INADDR_ANY)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+        self.listeners.append(sock)
+
+    def send_reply_to_host(self, recipient_host_id):
+        # Protect vector clock increment via lock
+        with self.vc_lock:
+            self.vc.inc()
+
+        self.msock.sendto(structure_message(self.id, self.vc, Messages.Reply), (recipient_host_id, self.entire_host_id_list[self.id][1])) #TODO Double check this
+
+    def send_request_to_quorum(self):
+        # Protect vector clock increment via lock
+        with self.vc_lock:
+            self.vc.inc()
+
+        # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
+        self.msock.sendto(structure_message(self.id, self.vc, Messages.REQUEST), (self.target_multicast_group,self.entire_host_id_list[self.id][1]))
+
+    def send_release_to_quorum(self):
+        # Protect vector clock increment via lock
+        with self.vc_lock:
+            self.vc.inc()
+
+        # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
+        self.msock.sendto(structure_message(self.id, self.vc, Messages.RELEASE), (self.target_multicast_group,HOSTS[self.id][1]))
+
 
     #   MLockMutex() initiates a BLOCKING request for the critical section.
     #
     #   Returns: value on obtaining lock.
     def MLockMutex(self):
-        print(f"Process {self.this_process_host_id} accessing CS with vector clock: {self.current_vector_clock.timestamp}")
+        print(f"Process {self.this_process_host_id} accessing CS with vector clock: {self.vector_clock.timestamp}")
         sleep(self.access_duration)# ^^^^ Should this be 10?
 
 
@@ -96,7 +157,7 @@ class CDistributedMutex:
         self.request_queue.get()
         self.votes = 0
         self.voted = False
-        self.send_release_to_quorum() #TODO
+        self.send_release_to_quorum()
         if not self.request_queue.empty():
             self.voted = True
             # We must send our reply to the next person in the queue. This could be a vote for itself.
@@ -108,7 +169,7 @@ class CDistributedMutex:
         self.voting_group_hosts = (
             []
         )  # Set representing the subset of hosts this node will make requests to.
-        self.current_vector_clock = VectorClock(
+        self.vector_clock = VectorClock(
             self_index=self.this_host, num_peers=len(self.hosts)
         )  # Current vector clock view of subset
 
@@ -120,23 +181,6 @@ class CDistributedMutex:
             accessible = True
         return accessible
     
-
-    def send_request_to_quorum(self):
-        # Protect vector clock increment via lock
-        with self.vc_lock:
-            self.vc.inc()
-
-        # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
-        self.msock.sendto(structure_message(self.id, self.vc, Messages.REQUEST), (self.target_multicast_group,HOSTS[self.id][1]))
-
-    def send_release_to_quorum(self):
-        # Protect vector clock increment via lock
-        with self.vc_lock:
-            self.vc.inc()
-
-        # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
-        self.msock.sendto(structure_message(self.id, self.vc, Messages.RELEASE), (self.target_multicast_group,HOSTS[self.id][1]))
-
     # This function is called when an access is requested. It blocks until it can access cs
     def _MRequest(self):
         self.votes = 1
@@ -152,7 +196,7 @@ class CDistributedMutex:
                 hostid, vector_clock, message_enum = unpack_message(new_message)
 
                 with self.vc_lock:
-                    self.current_vector_clock.update(vector_clock)
+                    self.vector_clock.update(vector_clock)
     
                 return hostid, message_enum, vector_clock, host_address
 
