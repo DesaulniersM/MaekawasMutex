@@ -16,9 +16,9 @@ def unpack_msg(msg_bytes):
 
 # Multicast funcs
 #################
-def send(message):
+def send(message, mcast_group):
     # multicast group and port
-    multicast_group = ('224.3.29.71', 10000)
+    multicast_group = mcast_group
 
     # Create sender socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -33,22 +33,11 @@ def send(message):
     # This specifies how many "hops" across the network the multicasted message will travel
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, struct.pack('b', 1))
 
+
     try:
         print(f"Sending '{message}'...")
         sent = sock.sendto(message, multicast_group)
         print(f"Successfully sent {sent} bytes.")
-
-        # Handle acks. This closes immediately upon receiving all acks
-        while True:
-            print('waiting to receive')
-            try:
-                data, server = sock.recvfrom(16) # just receives acks, that's all
-            except socket.timeout:
-                print('timed out, no more responses')
-                break
-            else:
-                print(f"received {data} from {server}")
-
     finally:
         print('closing socket')
         sock.close()
@@ -86,18 +75,33 @@ def begin_receiving():
         print('sending acknowledgement to', address)
         sock.sendto(b'ack', address)
 
+
+
 if __name__=="__main__":
+
+    # IP_MULTICAST_GROUP_PREFIX = (
+    # "224.0.2.1, 9001",
+    # "224.0.2.1, 900"
+# )  # Prefix for Ad-Hoc multicast group. Each quorum will have one of this and its suffix will just be id number
+    
     args = sys.argv
 
-    if len(args) < 2:
-        raise ValueError("You must specify at least one argument")
+    def structure_message(hostid, vector_clock, message_enum):
+        return str(hostid).encode('utf-8') + vector_clock.tobytes + str(message_enum).encode('utf-8') # Maybe we should actually use a struct for packing/unpacking???
 
-    if args[1]=="RECV":
-        begin_receiving()
+    from ..mutual_exclusion.vectorclock import VectorClock
 
-    elif args[1]=="SEND":
-        msg = ' '.join(sys.argv[2:]).encode()
-        send(msg)
+    send(structure_message(sys.argv[1],VectorClock(sys.argv[1],4),Messages.Reply), (sys.argv[2], sys.argv[3]))
 
-    else:
-        print("bruh... RECV or SEND......... which is it? Try again bitch.")
+    # if len(args) < 2:
+    #     raise ValueError("You must specify at least one argument")
+
+    # if args[1]=="RECV":
+    #     begin_receiving()
+
+    # elif args[1]=="REPLY":
+    #     msg = ' '.join(sys.argv[2:]).encode()
+    #     send(msg)
+
+    # else:
+    #     print("bruh... RECV or SEND......... which is it? Try again bitch.")

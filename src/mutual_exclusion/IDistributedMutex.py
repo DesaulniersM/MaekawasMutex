@@ -2,13 +2,19 @@ from mutual_exclusion.vectorclock import VectorClock
 from time import sleep
 from random import uniform
 import threading
-from enum import Enum
+from enum import IntEnum
 
-import socket, queue, select
+from quorum_generator.quorum_generator import generate_quorums
 
+
+import socket, queue, select, struct
+
+IP_MULTICAST_GROUP_PREFIX = (
+    "224.0.2."
+)  # Prefix for Ad-Hoc multicast group. Each quorum will have one of this and its suffix will just be id number
 
 # Three types of messages that can be sent by a node
-class Messages(Enum):
+class Messages(IntEnum):
     Request = 0         # Request to enter CS. Sent to subset quorum members
     Reply = 1           # Reply to Request. This will ALWAYS be a "You may enter CS" reply.
     Release = 2         # Release message communicates that the CS is exited and quorum members may reply to next queue members
@@ -16,12 +22,12 @@ class Messages(Enum):
 
 
 def structure_message(hostid, vector_clock, message_enum):
-    return str(hostid).encode('utf-8') + vector_clock.tobytes() + str(message_enum).encode('utf-8') # Maybe we should actually use a struct for packing/unpacking???
+    return str(hostid).encode('utf-8') + vector_clock.tobytes + str(message_enum).encode('utf-8') # Maybe we should actually use a struct for packing/unpacking???
 
 def parse_message(bmessage):
-    hostid = unpack_message(bmessage[0]) # first byte
+    hostid = int(unpack_message(bmessage[0:1])) # first byte
     vector_clock = VectorClock.frombytes(hostid, bmessage[1:-1]) # middle bytes are vector clock timestamp converted to bytes
-    message_enum = unpack_message(bmessage[-1]) # final byte
+    message_enum = int(unpack_message(bmessage[-1:])) # final byte
     return hostid, vector_clock, message_enum
 
 def unpack_message(bmessage):
@@ -29,9 +35,6 @@ def unpack_message(bmessage):
 
 class CDistributedMutex:
     def __init__(self) -> None:
-        self.voting_group_hosts = (
-            []
-        )  # Set representing the subset of hosts this node will make requests to.
 
         self.locked = False  # This flag is set when any node is known to have the lock
 
@@ -49,6 +52,7 @@ class CDistributedMutex:
     #        this_host : index of this objects personal host:port on hosts list
     def GlobalInitialize(self, this_host, hosts):
         self.entire_host_id_list = hosts
+        self.this_host_index = this_host
         self.this_process_host_id = hosts[this_host]
         self.vector_clock = VectorClock(
             self_index=this_host, num_peers=len(hosts)
@@ -57,26 +61,49 @@ class CDistributedMutex:
         # MESSAGE LEN IS ALWAYS 2 bytes + vector clock size: 1 byte node id (0-255), 8 byte (0,2**64-1) x N-element vector clock, 1 byte enum
         self.message_fixed_size = 2 + 8*len(hosts)
 
-        self.majority_quorum_votes = len(hosts) #
+        self.generate_quorum_and_multicast_groups()
 
+        self.majority_quorum_votes = len(self.this_process_quorum) 
+
+        self.listeners = []
+
+    def generate_quorum_and_multicast_groups(self):
+        self.entire_quorum_list = generate_quorums(len(self.entire_host_id_list))
+        self.this_process_quorum = self.entire_quorum_list[self.this_host_index]
+        self.multicast_group_list = [(IP_MULTICAST_GROUP_PREFIX+str(i), self.entire_host_id_list[i][1]) for i in range(len(self.entire_host_id_list))]
+        self.target_multicast_group = self.multicast_group_list[self.this_host_index]
 
     #   QuitAndCleanup() will be called once when you are done testing your code.
     def QuitAndCleanup(self):
         # Close threads
         pass
 
+    def MCleanup(self):
+        self.vector_clock = VectorClock(
+            self_index=self.this_host_index, num_peers=len(self.entire_host_id_list)
+        )  # Current vector clock view of subset
+        print("Good Night Moon 🌜")
+
+        
+
     #   MInitialize() will be called once when starting to test Maekawa’s. May be recalled multiple
     # times, as long as the corresponding cleanup algorithm, MCleanup(), is done after each
     # initialization. The votingGroupHosts array contains an index (to the hosts array) for each
     # host in the voting set/group of the current host.
     #   Input: voting_group_hosts : array of host ids in the set of the current host
-    def MInitialize(self, voting_group_hosts):
-        self.voting_group_hosts = [
-            self.entire_host_id_list[host] for host in voting_group_hosts
-        ]
+    def MInitialize(self, voting_group_hosts = None):
+       
         self.votes = 0      #Number of votes in favor of this node accessing CS
         self.voted = False  # If this variable is true, This node has not sent/received a Release message it is waiting on
+        
+        # Set up multicast node socket. Other nodes can respond given the address which comes in with the multicasted message
+        self._setup_multicast_send_socket()
 
+        # Set up multicast listener socket(s) - potentially one per multicast member group
+        for i,qk in enumerate(self.entire_quorum_list):
+            if (self.this_host_index in qk) and (i != self.this_host_index):
+                self._setup_multicast_receive_socket(self.multicast_group_list[i])
+        
         # Priority Queue for managing requests
         self.request_queue = queue.PriorityQueue() # items will be (self.vc) since VCs are comparable and also hold ID!
 
@@ -109,43 +136,45 @@ class CDistributedMutex:
             1)
 
         sock.setblocking(0)
-        sock.bind(('', None)) # Just bind to localhost and a random port number!
+        sock.bind(('', quorum_multicast_group[1])) # Just bind to localhost and a random port number!
 
         # Tell the operating system to add the socket to the multicast group
         # on all interfaces.
-        group = socket.inet_aton(quorum_multicast_group)
+        group = socket.inet_aton(quorum_multicast_group[0])
         mreq = struct.pack('4sL', group, socket.INADDR_ANY)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
         self.listeners.append(sock)
 
-    def send_reply_to_host(self, recipient_host_id):
+    def send_reply_to_host(self, recipient_address_and_port):
         # Protect vector clock increment via lock
         with self.vc_lock:
             self.vc.inc()
 
-        self.msock.sendto(structure_message(self.id, self.vc, Messages.Reply), (recipient_host_id, self.entire_host_id_list[self.id][1])) #TODO Double check this
+            self.msock.sendto(structure_message(self.id, self.vc, Messages.Reply), recipient_address_and_port)
 
     def send_request_to_quorum(self):
         # Protect vector clock increment via lock
         with self.vc_lock:
-            self.vc.inc()
+            self.vector_clock.inc()
 
-        # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
-        self.msock.sendto(structure_message(self.id, self.vc, Messages.REQUEST), (self.target_multicast_group,self.entire_host_id_list[self.id][1]))
+            # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
+            self.msock.sendto(structure_message(self.this_host_index, self.vector_clock, Messages.Request), self.target_multicast_group)
 
     def send_release_to_quorum(self):
         # Protect vector clock increment via lock
         with self.vc_lock:
-            self.vc.inc()
+            self.vector_clock.inc()
 
-        # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
-        self.msock.sendto(structure_message(self.id, self.vc, Messages.RELEASE), (self.target_multicast_group,HOSTS[self.id][1]))
+            # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
+            self.msock.sendto(structure_message(self.this_host_index, self.vector_clock, Messages.Release), self.target_multicast_group)
 
 
     #   MLockMutex() initiates a BLOCKING request for the critical section.
     #
     #   Returns: value on obtaining lock.
+
+
     def MLockMutex(self):
         print(f"Process {self.this_process_host_id} accessing CS with vector clock: {self.vector_clock.timestamp}")
         sleep(self.access_duration)# ^^^^ Should this be 10?
@@ -155,45 +184,47 @@ class CDistributedMutex:
     def MReleaseMutex(self):
         # Pop from queue and reset votes
         self.request_queue.get()
+
         self.votes = 0
         self.voted = False
+        print("MRelease")
+        print(self.voted)
+        print(self.votes)
         self.send_release_to_quorum()
         if not self.request_queue.empty():
             self.voted = True
             # We must send our reply to the next person in the queue. This could be a vote for itself.
             next_host = self.request_queue.get()
-            self.request_queue.put((next_host, next_host.host_id))
-            send_Reply_(next_host, enum) #TODO
+            self.request_queue.put(next_host)
+            self.send_reply_to_host(self, self.entire_host_id_list[next_host[1]])
 
-    def MCleanup(self):
-        self.voting_group_hosts = (
-            []
-        )  # Set representing the subset of hosts this node will make requests to.
-        self.vector_clock = VectorClock(
-            self_index=self.this_host, num_peers=len(self.hosts)
-        )  # Current vector clock view of subset
-
+    
 
     # This function checks if the cs is accesssible yet
     def _cs_accessible(self):
         accessible = False
-        if self.voted == True and self.votes >= self.majority_quorum_votes:
+        if (self.voted == True) and (self.votes >= self.majority_quorum_votes):
             accessible = True
         return accessible
     
     # This function is called when an access is requested. It blocks until it can access cs
     def _MRequest(self):
+        self.request_queue.put((self.vector_clock, self.this_host_index))
         self.votes = 1
         self.voted = True
         self.send_request_to_quorum()
         while True:
             if self._cs_accessible():
+                print("Locking")
                 self.MLockMutex()
+                print("Releasing")
                 self.MReleaseMutex()
+                break
 
     def _process_message(self, sock):
                 new_message, host_address = sock.recvfrom(self.message_fixed_size)
-                hostid, vector_clock, message_enum = unpack_message(new_message)
+                print(new_message)
+                hostid, vector_clock, message_enum = parse_message(new_message)
 
                 with self.vc_lock:
                     self.vector_clock.update(vector_clock)
@@ -216,8 +247,8 @@ class CDistributedMutex:
                 
                 sender_hostid, message_enum, sender_vector_clock, sender_address = self._process_message(sock)
 
-                match message_enum:
-                    case Messages.Release:
+                match int(message_enum):
+                    case int(Messages.Release):
                         self.voted = False
                         self.request_queue.get()
                         if self.request_queue.not_empty():
@@ -225,14 +256,18 @@ class CDistributedMutex:
                             # We must send our reply to the next person in the queue. This could be a vote for itself.
                             next_host = self.request_queue.get()
                             self.request_queue.put((next_host, next_host.host_id))
-                            send_Reply_(next_host, enum) #TODO
-                    case Messages.Reply:
+                            self.send_reply_to_host(sender_address)
+
+                    case int(Messages.Reply):
                         self.votes += 1
-                    case Messages.Request:
+                        print("In Reply")
+                        print(self.votes)
+                        print(self.voted)
+                    case int(Messages.Request):
                         self.request_queue.put(sender_vector_clock, sender_vector_clock.host_id)
                         if self.voted == False:
                             self.voted == True
-                            send_reply(sender_address, msg) #TODO
+                            self.send_reply_to_host(sender_address)
                             self.request_queue.put(())
 
 
@@ -245,7 +280,7 @@ class CDistributedMutex:
     def send_message():
         pass
 
-    def run(self, number_of_cs_requests = 2, number_of_runs = 1):
+    def run(self, number_of_cs_requests = 2, number_of_runs = 1, event=None):
 
         # The access frequency and duration will simulate computer needing to randomly access some cs. 
         # Since we'll be a using a print as the cs, We wil also have the computers wait for some time 
@@ -264,8 +299,8 @@ class CDistributedMutex:
             t1.daemon = True
             t1.start()
 
-            for requests in number_of_cs_requests:
+            for requests in range(number_of_cs_requests):
                 sleep(self.access_frequency)
                 self._MRequest()
 
-            self.MCleanup()  # clean up the maekawa algorithm
+            self.MCleanup()  # clean up the maekawa algorithm, next_host.host_id)

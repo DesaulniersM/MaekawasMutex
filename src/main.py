@@ -11,27 +11,39 @@
 """
 
 from mutual_exclusion.IDistributedMutex import CDistributedMutex
-from quorum_generator.quorum_generator import generate_quorums
+import socket
+import threading
 
-IP_MULTICAST_GROUP_PREFIX = (
-    "224.0.2."
-)  # Prefix for Ad-Hoc multicast group. Each quorum will have one of this and its suffix will just be id number
 
-IP_ADDRESS_LIST = ["138.67.127.173"]    # Matts public IP right now
+
 
 
 if __name__ == "__main__":
+    NUMBER_OF_PROCESSES_IN_TEST = 4
+    BASE_PORT_NUMBER = 9000
+   
+    import pprint
 
-    print(generate_quorums(5))
-    
+
+    # Hear we create the entire list of host_id's 
+    this_test_bed_id = socket.gethostbyname(socket.gethostname())
+    entire_host_id_list = [None]*NUMBER_OF_PROCESSES_IN_TEST
+
+    for i in range(0,NUMBER_OF_PROCESSES_IN_TEST):
+        entire_host_id_list[i] = (this_test_bed_id, BASE_PORT_NUMBER + i)
+
+    print(entire_host_id_list)
 
     # Run global init
 
     # Distributed Mutex object
-    # dist_mutex = CDistributedMutex()
+    dist_mutex = CDistributedMutex()
+    
 
-    # dist_mutex.GlobalInitialize()
+    dist_mutex.GlobalInitialize(0, entire_host_id_list)
 
-    # dist_mutex.run()  # run some number of times
+    pprint.pprint(dist_mutex.__dict__)
+
+    dist_mutex.run(event=threading.Event())  # run some number of times
 
     # dist_mutex.QuitAndCleanup()
