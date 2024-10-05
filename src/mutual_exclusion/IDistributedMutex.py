@@ -232,8 +232,8 @@ class CDistributedMutex:
             self.voted = True
             # We must send our reply to the next person in the queue. This could be a vote for itself.
             next_host = self.request_queue.get()
-            self.request_queue.put(next_host)
-            self.send_reply_to_host(self, self.entire_host_id_list[next_host[1]])
+            self.request_queue.put((next_host[0], next_host[1]))
+            self.send_reply_to_host(self.entire_host_id_list[next_host[1]])
 
     
 
@@ -246,6 +246,7 @@ class CDistributedMutex:
     
     # This function is called when an access is requested. It blocks until it can access cs
     def _MRequest(self):
+        print(self.request_queue.queue)
         self.request_queue.put((self.vector_clock, self.this_host_index))
         self.votes = 1                  # TODO This line may conflict with the case where this process reply's to itself after receiving a release message
         self.voted = True
@@ -302,12 +303,11 @@ class CDistributedMutex:
                         print(self.voted)
                     case int(Messages.Request):
                         print("Processing Request")
-                        self.request_queue.put(sender_vector_clock, sender_vector_clock._si)
+                        self.request_queue.put((sender_vector_clock, sender_vector_clock._si))
                         print("New Request vector clock queued")
                         if self.voted == False:
                             self.voted == True
                             self.send_reply_to_host(sender_address)
-                            self.request_queue.put(())
                     case _:
                         print(f"Message does not match expected messages: {message_enum}.")
 
