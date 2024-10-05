@@ -11,8 +11,7 @@
 """
 
 from mutual_exclusion.IDistributedMutex import CDistributedMutex
-import socket
-import threading
+import socket, threading, sys
 
 
 
@@ -23,6 +22,8 @@ if __name__ == "__main__":
     BASE_PORT_NUMBER = 9000
    
     import pprint
+
+    args = sys.argv
 
 
     # Hear we create the entire list of host_id's 
@@ -40,7 +41,7 @@ if __name__ == "__main__":
     dist_mutex = CDistributedMutex()
     
 
-    dist_mutex.GlobalInitialize(0, entire_host_id_list)
+    dist_mutex.GlobalInitialize(int(sys.argv[1]), entire_host_id_list)
 
     pprint.pprint(dist_mutex.__dict__)
 

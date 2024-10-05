@@ -18,16 +18,18 @@ class Messages(IntEnum):
     Request = 0         # Request to enter CS. Sent to subset quorum members
     Reply = 1           # Reply to Request. This will ALWAYS be a "You may enter CS" reply.
     Release = 2         # Release message communicates that the CS is exited and quorum members may reply to next queue members
+    Begin = 3           # This message is used to signal that process 0 has reached it's Minitialize
 
 
 
 def structure_message(hostid, vector_clock, message_enum):
+    print(f"Sending message {str(hostid).encode('utf-8') + vector_clock.tobytes + str(message_enum).encode('utf-8')}")
     return str(hostid).encode('utf-8') + vector_clock.tobytes + str(message_enum).encode('utf-8') # Maybe we should actually use a struct for packing/unpacking???
 
 def parse_message(bmessage):
     hostid = int(unpack_message(bmessage[0:1])) # first byte
     vector_clock = VectorClock.frombytes(hostid, bmessage[1:-1]) # middle bytes are vector clock timestamp converted to bytes
-    message_enum = int(unpack_message(bmessage[-1:])) # final byte
+    message_enum = unpack_message(bmessage[-1:]) # final byte
     return hostid, vector_clock, message_enum
 
 def unpack_message(bmessage):
@@ -70,7 +72,8 @@ class CDistributedMutex:
     def generate_quorum_and_multicast_groups(self):
         self.entire_quorum_list = generate_quorums(len(self.entire_host_id_list))
         self.this_process_quorum = self.entire_quorum_list[self.this_host_index]
-        self.multicast_group_list = [(IP_MULTICAST_GROUP_PREFIX+str(i), self.entire_host_id_list[i][1]) for i in range(len(self.entire_host_id_list))]
+        #TODO Added the length of enitre hose id list to the multicast port numbers, because i was seeing incoming direct messages on these multicast addresses. Probably only an issue when running on localhost
+        self.multicast_group_list = [(IP_MULTICAST_GROUP_PREFIX+str(i), self.entire_host_id_list[i][1] + len(self.entire_host_id_list)) for i in range(len(self.entire_host_id_list))]
         self.target_multicast_group = self.multicast_group_list[self.this_host_index]
 
     #   QuitAndCleanup() will be called once when you are done testing your code.
@@ -103,6 +106,13 @@ class CDistributedMutex:
         for i,qk in enumerate(self.entire_quorum_list):
             if (self.this_host_index in qk) and (i != self.this_host_index):
                 self._setup_multicast_receive_socket(self.multicast_group_list[i])
+
+        # Send a Messages.Begin message if this is process 0, to signal that other processes can proceed to execute initialize
+        if self.this_host_index == 0:
+            self.send_begin()
+        else:
+            self.wait_for_begin()
+            print("Received Begin")
         
         # Priority Queue for managing requests
         self.request_queue = queue.PriorityQueue() # items will be (self.vc) since VCs are comparable and also hold ID!
@@ -146,12 +156,41 @@ class CDistributedMutex:
 
         self.listeners.append(sock)
 
+    def send_begin(self):
+        print("Sending Begin signal")
+
+        for host_and_port in self.multicast_group_list:
+            # Protect vector clock increment via lock
+            if host_and_port != self.multicast_group_list:
+                print(f"Sending to {host_and_port}")
+                self.msock.sendto(structure_message(self.this_host_index, self.vector_clock, 3), host_and_port)
+            # sleep(.2)
+
+    def wait_for_begin(self):
+        print("Waiting for Begin signal.")
+        ready = False
+        while True:
+        # select readable socket
+            r, _, err = select.select(self.listeners, [], self.listeners, 0.1)
+            
+            
+            for sock in r:
+                
+                sender_hostid, message_enum, sender_vector_clock, sender_address = self._process_message(sock)
+                print(f"Received Message {message_enum}")
+                if int(message_enum) == int(Messages.Begin):
+                    ready = True
+            if ready == True:
+                break
+
+
+
     def send_reply_to_host(self, recipient_address_and_port):
         # Protect vector clock increment via lock
         with self.vc_lock:
-            self.vc.inc()
+            self.vector_clock.inc()
 
-            self.msock.sendto(structure_message(self.id, self.vc, Messages.Reply), recipient_address_and_port)
+            self.msock.sendto(structure_message(self.this_host_index, self.vector_clock, int(Messages.Reply)), recipient_address_and_port)
 
     def send_request_to_quorum(self):
         # Protect vector clock increment via lock
@@ -159,7 +198,7 @@ class CDistributedMutex:
             self.vector_clock.inc()
 
             # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
-            self.msock.sendto(structure_message(self.this_host_index, self.vector_clock, Messages.Request), self.target_multicast_group)
+            self.msock.sendto(structure_message(self.this_host_index, self.vector_clock, int(Messages.Request)), self.target_multicast_group)
 
     def send_release_to_quorum(self):
         # Protect vector clock increment via lock
@@ -167,14 +206,12 @@ class CDistributedMutex:
             self.vector_clock.inc()
 
             # Multicast needs to be sent over a port which all nodes in the quorum will be listening on (bound to)
-            self.msock.sendto(structure_message(self.this_host_index, self.vector_clock, Messages.Release), self.target_multicast_group)
+            self.msock.sendto(structure_message(self.this_host_index, self.vector_clock, int(Messages.Release)), self.target_multicast_group)
 
 
     #   MLockMutex() initiates a BLOCKING request for the critical section.
     #
     #   Returns: value on obtaining lock.
-
-
     def MLockMutex(self):
         print(f"Process {self.this_process_host_id} accessing CS with vector clock: {self.vector_clock.timestamp}")
         sleep(self.access_duration)# ^^^^ Should this be 10?
@@ -210,7 +247,7 @@ class CDistributedMutex:
     # This function is called when an access is requested. It blocks until it can access cs
     def _MRequest(self):
         self.request_queue.put((self.vector_clock, self.this_host_index))
-        self.votes = 1
+        self.votes = 1                  # TODO This line may conflict with the case where this process reply's to itself after receiving a release message
         self.voted = True
         self.send_request_to_quorum()
         while True:
@@ -251,11 +288,11 @@ class CDistributedMutex:
                     case int(Messages.Release):
                         self.voted = False
                         self.request_queue.get()
-                        if self.request_queue.not_empty():
+                        if self.request_queue.not_empty:
                             self.voted = True
                             # We must send our reply to the next person in the queue. This could be a vote for itself.
                             next_host = self.request_queue.get()
-                            self.request_queue.put((next_host, next_host.host_id))
+                            self.request_queue.put((next_host[0], next_host[1]))
                             self.send_reply_to_host(sender_address)
 
                     case int(Messages.Reply):
@@ -264,11 +301,15 @@ class CDistributedMutex:
                         print(self.votes)
                         print(self.voted)
                     case int(Messages.Request):
-                        self.request_queue.put(sender_vector_clock, sender_vector_clock.host_id)
+                        print("Processing Request")
+                        self.request_queue.put(sender_vector_clock, sender_vector_clock._si)
+                        print("New Request vector clock queued")
                         if self.voted == False:
                             self.voted == True
                             self.send_reply_to_host(sender_address)
                             self.request_queue.put(())
+                    case _:
+                        print(f"Message does not match expected messages: {message_enum}.")
 
 
 

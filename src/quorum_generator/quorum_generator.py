@@ -52,3 +52,19 @@ def generate_quorums(num_of_processes):
 
     return quorum_list
 
+if __name__ == "__main__":
+    import pprint
+
+    print("hello")
+    print(generate_quorums(13))
+
+    subset_dict = {}
+    subset_quorum_list = generate_quorums(13)
+
+    for i in range(len(subset_quorum_list)):
+        subset_quorum_list[i].remove(i)
+        subset_dict[i] = subset_quorum_list[i]
+
+    
+    
+

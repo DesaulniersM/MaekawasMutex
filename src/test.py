@@ -1,5 +1,21 @@
+import sys, struct, socket, time, threading
 
-import sys, struct, socket
+
+
+def structure_message(hostid, vector_clock, message_enum):
+    return str(hostid).encode('utf-8') + vector_clock.tobytes + str(message_enum).encode('utf-8') # Maybe we should actually use a struct for packing/unpacking???
+
+def parse_message(bmessage):
+    hostid = int(unpack_message(bmessage[0:1])) # first byte
+    vector_clock = VectorClock.frombytes(hostid, bmessage[1:-1]) # middle bytes are vector clock timestamp converted to bytes
+    message_enum = int(unpack_message(bmessage[-1:])) # final byte
+    return hostid, vector_clock, message_enum
+
+def unpack_message(bmessage):
+    return bmessage.decode('utf-8')
+
+
+
 
 # Multicast funcs
 #################
@@ -43,7 +59,9 @@ if __name__=="__main__":
     from mutual_exclusion.IDistributedMutex import *
     from mutual_exclusion.vectorclock import VectorClock
 
-    send(structure_message(sys.argv[1],VectorClock(sys.argv[1],4),int(Messages.Reply)), (sys.argv[2], int(sys.argv[3])))
+    mock_vector_clock = VectorClock(sys.argv[1],4)
+    # mock_vector_clock.
+    send(structure_message(sys.argv[1],mock_vector_clock,int(Messages.Reply)), (sys.argv[2], int(sys.argv[3])))
 
     # if len(args) < 2:
     #     raise ValueError("You must specify at least one argument")
