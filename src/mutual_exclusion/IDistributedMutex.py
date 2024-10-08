@@ -3,6 +3,7 @@ from time import sleep
 from random import uniform
 import threading
 from enum import IntEnum
+import time
 
 from quorum_generator.quorum_generator import generate_quorums
 
@@ -23,7 +24,6 @@ class Messages(IntEnum):
 
 
 def structure_message(hostid, vector_clock, message_enum):
-    print(f"Sending message {str(hostid).encode('utf-8') + vector_clock.tobytes + str(message_enum).encode('utf-8')}")
     return str(hostid).encode('utf-8') + vector_clock.tobytes + str(message_enum).encode('utf-8') # Maybe we should actually use a struct for packing/unpacking???
 
 def parse_message(bmessage):
@@ -85,7 +85,6 @@ class CDistributedMutex:
         self.vector_clock = VectorClock(
             self_index=self.this_host_index, num_peers=len(self.entire_host_id_list)
         )  # Current vector clock view of subset
-        print("Good Night Moon 🌜")
 
         
 
@@ -162,7 +161,6 @@ class CDistributedMutex:
         for host_and_port in self.multicast_group_list:
             # Protect vector clock increment via lock
             if host_and_port != self.multicast_group_list:
-                print(f"Sending to {host_and_port}")
                 self.msock.sendto(structure_message(self.this_host_index, self.vector_clock, 3), host_and_port)
             # sleep(.2)
 
@@ -177,7 +175,6 @@ class CDistributedMutex:
             for sock in r:
                 
                 sender_hostid, message_enum, sender_vector_clock, sender_address = self._process_message(sock)
-                print(f"Received Message {message_enum}")
                 if int(message_enum) == int(Messages.Begin):
                     ready = True
             if ready == True:
@@ -186,6 +183,7 @@ class CDistributedMutex:
 
 
     def send_reply_to_host(self, recipient_address_and_port):
+        # print(f"Sending reply to {recipient_address_and_port}")
         # Protect vector clock increment via lock
         with self.vc_lock:
             self.vector_clock.inc()
@@ -213,7 +211,8 @@ class CDistributedMutex:
     #
     #   Returns: value on obtaining lock.
     def MLockMutex(self):
-        print(f"Process {self.this_process_host_id} accessing CS with vector clock: {self.vector_clock.timestamp}")
+        # print(f"Process {self.this_process_host_id} accessing CS with vector clock: {self.vector_clock.timestamp}")
+        print(f"{self.entire_host_id_list[self.this_host_index]},{self.this_host_index}:{self.vector_clock.timestamp}")
         sleep(self.access_duration)# ^^^^ Should this be 10?
 
 
@@ -224,9 +223,6 @@ class CDistributedMutex:
 
         self.votes = 0
         self.voted = False
-        print("MRelease")
-        print(self.voted)
-        print(self.votes)
         self.send_release_to_quorum()
         if not self.request_queue.empty():
             self.voted = True
@@ -245,23 +241,21 @@ class CDistributedMutex:
         return accessible
     
     # This function is called when an access is requested. It blocks until it can access cs
-    def _MRequest(self):
-        print(self.request_queue.queue)
+    def _MRequest(self, timeout):
         self.request_queue.put((self.vector_clock, self.this_host_index))
         self.votes = 1                  # TODO This line may conflict with the case where this process reply's to itself after receiving a release message
         self.voted = True
         self.send_request_to_quorum()
-        while True:
+        timeout_time = time.perf_counter() + timeout
+        while time.perf_counter() < timeout_time:
             if self._cs_accessible():
-                print("Locking")
                 self.MLockMutex()
-                print("Releasing")
-                self.MReleaseMutex()
                 break
+        self.MReleaseMutex()
+        
 
     def _process_message(self, sock):
                 new_message, host_address = sock.recvfrom(self.message_fixed_size)
-                print(new_message)
                 hostid, vector_clock, message_enum = parse_message(new_message)
 
                 with self.vc_lock:
@@ -285,6 +279,7 @@ class CDistributedMutex:
                 
                 sender_hostid, message_enum, sender_vector_clock, sender_address = self._process_message(sock)
 
+
                 match int(message_enum):
                     case int(Messages.Release):
                         self.voted = False
@@ -298,18 +293,15 @@ class CDistributedMutex:
 
                     case int(Messages.Reply):
                         self.votes += 1
-                        print("In Reply")
-                        print(self.votes)
-                        print(self.voted)
                     case int(Messages.Request):
-                        print("Processing Request")
                         self.request_queue.put((sender_vector_clock, sender_vector_clock._si))
-                        print("New Request vector clock queued")
+
                         if self.voted == False:
                             self.voted == True
                             self.send_reply_to_host(sender_address)
                     case _:
-                        print(f"Message does not match expected messages: {message_enum}.")
+                        # print(f"Message does not match expected messages: {message_enum}.")
+                        pass
 
 
 
@@ -321,15 +313,15 @@ class CDistributedMutex:
     def send_message():
         pass
 
-    def run(self, number_of_cs_requests = 2, number_of_runs = 1, event=None):
+    def run(self, number_of_cs_requests = 10, number_of_runs = 1, event=None):
 
         # The access frequency and duration will simulate computer needing to randomly access some cs. 
         # Since we'll be a using a print as the cs, We wil also have the computers wait for some time 
         # while inside to test the request while process is holding mechanism.
 
         # Put these somewhere better
-        self.access_frequency = uniform(1.5, 3.5)  # [seconds] how often guard will be called
-        self.access_duration = uniform(.5, 1.5)  # [seconds] how long lock will be held once inside guard
+        self.access_frequency = uniform(1, 3)  # [seconds] how often guard will be called
+        self.access_duration = uniform(.0001, .001)  # [seconds] how long lock will be held once inside guard
 
         # Run maekawas algorithm this many times
         for run in range(number_of_runs):
@@ -342,6 +334,8 @@ class CDistributedMutex:
 
             for requests in range(number_of_cs_requests):
                 sleep(self.access_frequency)
-                self._MRequest()
-
+                self._MRequest(.1)
+            # print("Good Night Moon 🌜")
+            while True:
+                pass
             self.MCleanup()  # clean up the maekawa algorithm, next_host.host_id)

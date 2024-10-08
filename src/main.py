@@ -13,12 +13,8 @@
 from mutual_exclusion.IDistributedMutex import CDistributedMutex
 import socket, threading, sys
 
-
-
-
-
 if __name__ == "__main__":
-    NUMBER_OF_PROCESSES_IN_TEST = 4
+    NUMBER_OF_PROCESSES_IN_TEST = 5
     BASE_PORT_NUMBER = 9000
    
     import pprint
@@ -33,18 +29,12 @@ if __name__ == "__main__":
     for i in range(0,NUMBER_OF_PROCESSES_IN_TEST):
         entire_host_id_list[i] = (this_test_bed_id, BASE_PORT_NUMBER + i)
 
-    print(entire_host_id_list)
-
-    # Run global init
 
     # Distributed Mutex object
     dist_mutex = CDistributedMutex()
     
-
     dist_mutex.GlobalInitialize(int(sys.argv[1]), entire_host_id_list)
-
-    pprint.pprint(dist_mutex.__dict__)
 
     dist_mutex.run(event=threading.Event())  # run some number of times
 
-    # dist_mutex.QuitAndCleanup()
+    dist_mutex.QuitAndCleanup()

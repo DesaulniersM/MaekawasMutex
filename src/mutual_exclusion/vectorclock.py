@@ -35,7 +35,6 @@ class VectorClock:
     # specials for direct comparison of VC to VC
     def __lt__(self, other): # actually checks less than or equal to across entire timestamp
         # standard "sorted" algorithm in python uses __lt__ as default comparator
-        print(type(other))
         return VectorClock.check_causality(self.timestamp, other.timestamp)
 
     @staticmethod
